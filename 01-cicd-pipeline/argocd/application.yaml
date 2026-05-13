@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devops-app
+  namespace: argocd
+  labels:
+    project: devops-pipeline
+    environment: production
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Ayush-Harsh-devops/devops-project
+    targetRevision: main
+    path: 01-cicd-pipeline/argocd
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: devops-app
+
+  syncPolicy:
+    automated:
+      prune: true        # Delete old resources automatically
+      selfHeal: true     # Auto fix if someone manually changes
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
