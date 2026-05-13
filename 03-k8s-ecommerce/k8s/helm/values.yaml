@@ -1,0 +1,73 @@
+# ============================================
+# HELM VALUES — E-commerce App
+# Author: Ayush Harsh
+# ============================================
+
+replicaCount: 3
+
+image:
+  repository: your-ecr-url/ecommerce-app
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  hosts:
+    - host: ecommerce.ayushharsh.dev
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+env:
+  NODE_ENV: production
+  PORT: "3000"
+
+postgresql:
+  enabled: true
+  auth:
+    database: ecommercedb
+    username: ecomuser
+
+redis:
+  enabled: true
+  auth:
+    enabled: true
