@@ -1,0 +1,87 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_REGION = 'us-east-1'
+        ECR_REGISTRY = 'your-aws-account-id.dkr.ecr.us-east-1.amazonaws.com'
+        IMAGE_NAME = 'devops-app'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        SONAR_PROJECT = 'devops-app'
+    }
+
+    stages {
+        stage('📥 Checkout') {
+            steps {
+                checkout scm
+                echo "✅ Code checkout complete"
+            }
+        }
+
+        stage('🔍 SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        sonar-scanner \
+                          -Dsonar.projectKey=${SONAR_PROJECT} \
+                          -Dsonar.sources=. \
+                          -Dsonar.host.url=${SONAR_HOST_URL}
+                    '''
+                }
+            }
+        }
+
+        stage('✅ Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('🐳 Docker Build') {
+            steps {
+                sh '''
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
+                      ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('🔐 Docker Push to ECR') {
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: 'aws-creds') {
+                    sh '''
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                          docker login --username AWS \
+                          --password-stdin ${ECR_REGISTRY}
+                        docker push ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                    '''
+                }
+            }
+        }
+
+        stage('🚀 ArgoCD Deploy') {
+            steps {
+                sh '''
+                    cd argocd
+                    sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" deployment.yaml
+                    git config user.email "ci@devops.com"
+                    git config user.name "Jenkins CI"
+                    git add .
+                    git commit -m "ci: update image tag to ${IMAGE_TAG}"
+                    git push origin main
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline SUCCESS — App Deployed!'
+        }
+        failure {
+            echo '❌ Pipeline FAILED — Check logs!'
+        }
+    }
+}
