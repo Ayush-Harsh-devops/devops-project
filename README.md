@@ -1,7 +1,7 @@
 # 🚀 DevOps Real-Time Projects — Ayush Harsh
 
 Production-grade DevOps projects showcasing end-to-end CI/CD, 
-Infrastructure as Code, Kubernetes deployment, and Monitoring.
+Infrastructure as Code, Kubernetes, Monitoring, and MLOps.
 
 ---
 
@@ -43,12 +43,25 @@ Docker + Helm + ArgoCD + Prometheus + Grafana
 ### 📊 04 — Monitoring & Observability Stack
 Prometheus + Grafana + Alertmanager + Loki + AWS EKS
 
-- Real-time metrics collection (CPU, Memory, Disk, Network)
+- Real-time metrics (CPU, Memory, Disk, Network)
 - Custom Grafana dashboards
-- 8 production alert rules (Critical + Warning)
-- Slack + Email alert routing via Alertmanager
+- 8 production alert rules
+- Slack + Email alert routing
 - Log aggregation with Loki + Promtail
-- Kubernetes DaemonSet for node-level monitoring
+- Kubernetes DaemonSet node monitoring
+
+---
+
+### 🤖 05 — MLOps Pipeline — ML Model on Kubernetes
+Python + MLflow + FastAPI + Docker + AWS EKS
+
+- House Price Prediction ML model
+- MLflow experiment tracking
+- FastAPI REST API endpoint
+- Dockerized and deployed on EKS
+- HPA auto scaling (2-10 pods)
+- Prometheus model monitoring
+- GitHub Actions CI/CD pipeline
 
 ---
 
@@ -56,12 +69,13 @@ Prometheus + Grafana + Alertmanager + Loki + AWS EKS
 
 `Jenkins` `GitHub Actions` `ArgoCD` `Docker` `Kubernetes`
 `Terraform` `AWS EKS` `AWS RDS` `Helm` `Prometheus` `Grafana`
-`Alertmanager` `Loki` `SonarQube` `Trivy` `Redis` `PostgreSQL`
+`Alertmanager` `Loki` `MLflow` `FastAPI` `Scikit-learn`
+`SonarQube` `Trivy` `Redis` `PostgreSQL` `Python`
 
 ---
 
 ## 👨‍💻 Author
 
 **Ayush Harsh** — DevOps & Cloud Engineer
-- 📧 harsh4ayush85@gmail.com
+- 📧 harsh4ayush85@gmail.com  --- 7903944895
 - 🐙 [GitHub](https://github.com/Ayush-Harsh-devops)
