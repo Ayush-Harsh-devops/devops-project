@@ -39,6 +39,6 @@ kubectl apply -f k8s/monitoring-stack.yml
 
 ## 👤 Author
 
-Ayush Harsh — DevOps & Cloud Engineer
+Ayush Harsh — | DevOps & Cloud Engineer |
 Email: harsh4ayush85@gmail.com
 GitHub: https://github.com/Ayush-Harsh-devops
