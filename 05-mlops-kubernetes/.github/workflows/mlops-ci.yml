@@ -1,0 +1,61 @@
+name: MLOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '05-mlops-kubernetes/**'
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: house-price-api
+  EKS_CLUSTER: devops-cluster
+
+jobs:
+  train-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r 05-mlops-kubernetes/app/requirements.txt
+
+      - name: Train ML Model
+        run: |
+          cd 05-mlops-kubernetes
+          python model/train.py
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker image
+        run: |
+          cd 05-mlops-kubernetes
+          docker build -t $ECR_REPOSITORY .
+          docker tag $ECR_REPOSITORY:latest \
+            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}
+          docker push \
+            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}
+
+      - name: Deploy to EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name $EKS_CLUSTER --region $AWS_REGION
+          kubectl apply -f 05-mlops-kubernetes/k8s/deployment.yml
+          kubectl rollout status deployment/house-price-api -n mlops
