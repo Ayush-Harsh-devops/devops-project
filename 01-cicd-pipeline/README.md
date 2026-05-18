@@ -44,7 +44,7 @@ ArgoCD (GitOps) → Deploy to AWS EKS
 - ✅ GitOps with ArgoCD (auto self-heal + auto sync)
 - ✅ Zero downtime Rolling Update deployment
 - ✅ Health checks + Readiness probes
-- ✅ Non-root Docker user (security best practice)
+- ✅ Non-root Docker user (security best practice) .
 
 ## 🔐 Secrets Required
 
