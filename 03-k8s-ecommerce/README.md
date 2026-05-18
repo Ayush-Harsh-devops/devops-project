@@ -55,7 +55,7 @@ GitOps:     GitHub Push → ArgoCD → EKS Deploy
 - ✅ ArgoCD GitOps (auto sync + self heal)
 - ✅ HPA — Auto scaling (2 to 10 pods)
 - ✅ Zero downtime Rolling Updates
-- ✅ Prometheus + Grafana monitoring
+- ✅ Prometheus + Grafana monitoring .
 - ✅ AWS ALB Ingress Controller
 - ✅ Health checks on all containers
 
