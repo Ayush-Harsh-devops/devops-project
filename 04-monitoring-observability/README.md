@@ -1,6 +1,6 @@
 # 📊 DevOps Monitoring & Observability Stack
 
-Production-grade monitoring stack with Prometheus, Grafana, Alertmanager, and Loki — deployed on Kubernetes (AWS EKS)
+Production-grade monitoring stack with Prometheus, Grafana, Alertmanager, and Loki — deployed on Kubernetes (AWS EKS) .
 
 ## 🛠️ Tech Stack
 
