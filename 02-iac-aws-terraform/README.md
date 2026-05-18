@@ -31,7 +31,7 @@ rds/   → PostgreSQL, Security Groups, Secrets Manager
 - ✅ RDS password auto-generated + stored in Secrets Manager
 - ✅ Multi-AZ RDS in Production
 - ✅ Least privilege IAM roles
-- ✅ All resources tagged automatically
+- ✅ All resources tagged automatically .
 
 ## 🚀 How to Deploy
 ```bash
