@@ -1,6 +1,6 @@
 # 🤖 MLOps Pipeline — ML Model on Kubernetes
 
-End-to-end MLOps pipeline: Train → Track → Containerize → Deploy on AWS EKS
+End-to-end MLOps pipeline: Train → Track → Containerize → Deploy on AWS EKS .
 
 ## 🏗️ Architecture
 
