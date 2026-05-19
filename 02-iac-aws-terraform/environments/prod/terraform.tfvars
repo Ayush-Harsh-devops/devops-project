@@ -1,4 +1,4 @@
-# ─── PROD ENVIRONMENT ───
+# ─── PROD ENVIRONMENT ─── 
 environment            = "prod"
 project_name           = "ayush-devops"
 aws_region             = "us-east-1"
