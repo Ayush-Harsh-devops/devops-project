@@ -1,4 +1,4 @@
-# ─── DEV ENVIRONMENT ───
+# ─── DEV ENVIRONMENT ─── 
 environment            = "dev"
 project_name           = "ayush-devops"
 aws_region             = "us-east-1"
