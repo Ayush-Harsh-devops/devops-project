@@ -10,14 +10,14 @@ pipeline {
     }
 
     stages {
-        stage('📥 Checkout') {
+        stage(' Checkout') {
             steps {
                 checkout scm
-                echo "✅ Code checkout complete"
+                echo " Code checkout complete"
             }
         }
 
-        stage('🔍 SonarQube Analysis') {
+        stage(' SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
@@ -30,7 +30,7 @@ pipeline {
             }
         }
 
-        stage('✅ Quality Gate') {
+        stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
@@ -38,7 +38,7 @@ pipeline {
             }
         }
 
-        stage('🐳 Docker Build') {
+        stage('Docker Build') {
             steps {
                 sh '''
                     docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
@@ -48,7 +48,7 @@ pipeline {
             }
         }
 
-        stage('🔐 Docker Push to ECR') {
+        stage('Docker Push to ECR') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-creds') {
                     sh '''
@@ -61,7 +61,7 @@ pipeline {
             }
         }
 
-        stage('🚀 ArgoCD Deploy') {
+        stage('ArgoCD Deploy') {
             steps {
                 sh '''
                     cd argocd
@@ -78,10 +78,10 @@ pipeline {
 
     post {
         success {
-            echo '✅ Pipeline SUCCESS — App Deployed!'
+            echo 'Pipeline SUCCESS — App Deployed!'
         }
         failure {
-            echo '❌ Pipeline FAILED — Check logs!'
+            echo 'Pipeline FAILED — Check logs!'
         }
     }
 }
