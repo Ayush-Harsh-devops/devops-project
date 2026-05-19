@@ -1,6 +1,6 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
-metadata:
+metadata: 
   name: devops-app
   namespace: argocd
   labels:
