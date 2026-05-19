@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/Ayush-Harsh-devops/devops-project
+    repoURL: https://github.com/Ayush-Harsh-devops/devops-project 
     targetRevision: main
     path: 03-k8s-ecommerce/k8s/helm
     helm:
