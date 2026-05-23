@@ -25,7 +25,7 @@ services:
       - DB_NAME=ecommercedb
       - REDIS_HOST=redis
     depends_on:
-      postgres:
+      postgres: 
         condition: service_healthy
       redis:
         condition: service_healthy
