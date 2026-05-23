@@ -6,7 +6,7 @@ metadata:
   labels:
     project: devops-pipeline
     environment: production
-spec:
+spec: 
   project: default
 
   source:
