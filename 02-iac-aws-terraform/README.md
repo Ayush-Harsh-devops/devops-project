@@ -22,7 +22,7 @@ rds/   → PostgreSQL, Security Groups, Secrets Manager
 | AWS EKS | Kubernetes Cluster |
 | AWS RDS | PostgreSQL Database |
 | AWS Secrets Manager | Password Management |
-| S3 + DynamoDB | Remote State + Lock |
+| S3 + DynamoDB | Remote State + Lock | 
 
 ## ⚡ Key Features
 - ✅ Reusable Terraform modules
