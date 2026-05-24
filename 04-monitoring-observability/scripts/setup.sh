@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # DevOps Monitoring Stack - Setup Script
-# Author: Ayush Harsh
+# Author: Ayush Harsh 
 # ============================================================
 
 set -e
