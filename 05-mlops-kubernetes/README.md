@@ -11,7 +11,7 @@ MLflow Experiment Tracking
 Docker Image Build
 ↓
 AWS ECR Push
-↓
+↓ 
 Kubernetes EKS Deploy
 ↓
 FastAPI REST Endpoint
