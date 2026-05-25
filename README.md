@@ -61,7 +61,7 @@ Python + MLflow + FastAPI + Docker + AWS EKS
 - Dockerized and deployed on EKS
 - HPA auto scaling (2-10 pods)
 - Prometheus model monitoring
-- GitHub Actions CI/CD pipeline
+- GitHub Actions CI/CD pipeline 
 
 ---
 
