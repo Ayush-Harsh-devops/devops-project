@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import joblib
-import numpy as np
+import numpy as np 
 import os
 from prometheus_client import Counter, Histogram, generate_latest
 from starlette.responses import Response
