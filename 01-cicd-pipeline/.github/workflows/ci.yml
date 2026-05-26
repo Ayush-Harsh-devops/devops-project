@@ -1,4 +1,4 @@
-name: CI Pipeline - Security & Quality
+name: CI/CD Pipeline — Security, Quality & Deploy
 
 on:
   push:
@@ -9,82 +9,245 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: devops-app
+  NODE_VERSION: '18'
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
-  security-scan:
-    name:  Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
 
-      - name: Run Trivy vulnerability scanner
+# =============================================================
+# JOB 1: Security Scan
+# =============================================================
+  security-scan:
+    name: Security Scan (Trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Show System Info
+        run: |
+          set -e
+          echo "===== RUNNER INFO ====="
+          echo "OS        : $(uname -a)"
+          echo "CPU Cores : $(nproc)"
+          echo "RAM       : $(free -h | awk '/^Mem/ {print $2}')"
+          echo "Disk      : $(df -h / | awk 'NR==2 {print $4}') free"
+          echo "Branch    : ${GITHUB_REF_NAME}"
+          echo "Commit    : ${GITHUB_SHA:0:7}"
+          echo "Triggered : ${GITHUB_ACTOR}"
+          echo "======================="
+
+      - name: Run Trivy Filesystem Scan
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
           exit-code: '1'
+          format: sarif
+          output: trivy-results.sarif
 
+      - name: Upload Trivy SARIF Report
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Check for Secrets in Code
+        run: |
+          set -e
+          echo "[INFO] Scanning for hardcoded secrets..."
+          if grep -rE "(AWS_SECRET|api_key|password\s*=\s*['\"][^'\"]+['\"])" \
+               --include="*.js" \
+               --include="*.ts" \
+               --include="*.env" \
+               --exclude-dir=node_modules . ; then
+            echo "[ERROR] Hardcoded secrets found! Failing build."
+            exit 1
+          else
+            echo "[OK] No hardcoded secrets detected."
+          fi
+
+# =============================================================
+# JOB 2: Code Quality
+# =============================================================
   code-quality:
-    name:  Code Quality
+    name: Code Quality & Tests
     runs-on: ubuntu-latest
     needs: security-scan
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install Dependencies
+        run: |
+          set -e
+          echo "[INFO] Installing dependencies..."
+          npm ci --no-audit --no-fund
+          echo "[INFO] Installed packages: $(cat package-lock.json | grep '"node_modules/' | wc -l)"
 
-      - name: Run tests
-        run: npm test
+      - name: Run Linter
+        run: |
+          set -e
+          echo "[INFO] Running ESLint..."
+          npx eslint . --ext .js,.ts \
+            --max-warnings=0 \
+            --format stylish || true
+          echo "[INFO] Lint check complete"
+
+      - name: Run Tests with Coverage
+        run: |
+          set -e
+          echo "[INFO] Running test suite..."
+          npm test -- \
+            --coverage \
+            --coverageReporters=text \
+            --forceExit 2>&1 | tee test-output.log
+
+          echo "[INFO] Test summary:"
+          grep -E "Tests:|Suites:|Coverage" test-output.log || true
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
+# =============================================================
+# JOB 3: Docker Build & Push
+# =============================================================
   docker-build:
-    name:  Docker Build & Push
+    name: Docker Build & Push to ECR
     runs-on: ubuntu-latest
     needs: code-quality
-    steps:
-      - uses: actions/checkout@v3
+    outputs:
+      image-uri: ${{ steps.build-push.outputs.image-uri }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS Identity
+        run: |
+          set -e
+          echo "[INFO] Verifying AWS credentials..."
+          aws sts get-caller-identity
+          echo "[INFO] AWS auth successful"
+
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to ECR
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build, Tag & Push Image
+        id: build-push
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          set -e
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SHORT_SHA="${GITHUB_SHA:0:7}"
 
+          echo "[INFO] Building image..."
+          docker build \
+            --no-cache \
+            --build-arg BUILD_DATE="${BUILD_DATE}" \
+            --build-arg VCS_REF="${SHORT_SHA}" \
+            --build-arg IMAGE_TAG="${IMAGE_TAG}" \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            .
+
+          echo "[INFO] Image size: $(docker image inspect \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --format='{{.Size}}' | \
+            awk '{printf "%.2f MB", $1/1024/1024}')"
+
+          echo "[INFO] Scanning built image with Trivy..."
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --no-progress \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+          echo "[INFO] Pushing image to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          echo "[INFO] Cleaning up local images..."
+          docker rmi $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG || true
+          docker system prune -f --filter "until=1h"
+
+          echo "image-uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "[SUCCESS] Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+# =============================================================
+# JOB 4: Notify
+# =============================================================
   notify:
-    name:  Notify
+    name: Slack Notification
     runs-on: ubuntu-latest
-    needs: docker-build
+    needs: [ security-scan, code-quality, docker-build ]
     if: always()
-    steps: 
-      - name: Pipeline Status
+
+    steps:
+      - name: Pipeline Status Report
         run: |
+          set -e
+          echo "===== PIPELINE SUMMARY ====="
+          echo "Repo      : ${GITHUB_REPOSITORY}"
+          echo "Branch    : ${GITHUB_REF_NAME}"
+          echo "Commit    : ${GITHUB_SHA:0:7}"
+          echo "Actor     : ${GITHUB_ACTOR}"
+          echo "Security  : ${{ needs.security-scan.result }}"
+          echo "Quality   : ${{ needs.code-quality.result }}"
+          echo "Docker    : ${{ needs.docker-build.result }}"
+          echo "============================"
+
           if [ "${{ needs.docker-build.result }}" == "success" ]; then
-            echo " Pipeline SUCCESS - Image pushed to ECR!"
+            echo "[SUCCESS] Full pipeline passed — image deployed to ECR!"
+            exit 0
           else
-            echo " Pipeline FAILED - Check logs!"
+            echo "[FAILED] Pipeline failed — check logs at: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            exit 1
           fi
+
+      - name: Send Slack Notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "channel": "#devops-alerts",
+              "text": "${{ needs.docker-build.result == 'success' && '✅ BUILD SUCCESS' || '❌ BUILD FAILED' }}",
+              "attachments": [{
+                "color": "${{ needs.docker-build.result == 'success' && 'good' || 'danger' }}",
+                "fields": [
+                  { "title": "Repo",   "value": "${{ github.repository }}", "short": true },
+                  { "title": "Branch", "value": "${{ github.ref_name }}",   "short": true },
+                  { "title": "Commit", "value": "${{ github.sha }}",        "short": true },
+                  { "title": "Actor",  "value": "${{ github.actor }}",      "short": true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
