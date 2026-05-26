@@ -1,52 +1,224 @@
-apiVersion: argoproj.io/v1alpha1
-kind: Application
+# =============================================
+# Namespace
+# =============================================
+apiVersion: v1
+kind: Namespace
 metadata:
   name: devops-app
-  namespace: argocd
   labels:
-    project: devops-pipeline
+    app: devops-app
     environment: production
     managed-by: argocd
-    team: devops
+
+---
+# =============================================
+# Deployment
+# =============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-app
+  namespace: devops-app
+  labels:
+    app: devops-app
+    version: "IMAGE_TAG"
+    environment: production
   annotations:
-    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: devops-alerts
-    notifications.argoproj.io/subscribe.on-sync-failed.slack: devops-alerts
-    notifications.argoproj.io/subscribe.on-health-degraded.slack: devops-alerts
+    deployment.kubernetes.io/revision: "1"
+    kubernetes.io/change-cause: "ci: deploy image tag IMAGE_TAG"
 spec:
-  project: default
+  replicas: 3
+  revisionHistoryLimit: 5       # Keep last 5 rollback points
 
-  source:
-    repoURL: https://github.com/Ayush-Harsh-devops/devops-project
-    targetRevision: main
-    path: 01-cicd-pipeline/argocd
+  selector:
+    matchLabels:
+      app: devops-app
 
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: devops-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0          # Zero downtime deploy
 
-  syncPolicy:
-    automated:
-      prune: true          # Delete old resources automatically
-      selfHeal: true       # Auto fix manual changes
-      allowEmpty: false    # Never sync empty state (safety)
-    syncOptions:
-      - CreateNamespace=true
-      - PrunePropagationPolicy=foreground
-      - ApplyOutOfSyncOnly=true     # Only sync changed resources
-      - ServerSideApply=true        # Better conflict handling
-    retry:
-      limit: 5
-      backoff:
-        duration: 5s
-        factor: 2
-        maxDuration: 3m
+  template:
+    metadata:
+      labels:
+        app: devops-app
+        version: "IMAGE_TAG"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
 
-  # Ignore differences in auto-scaled replicas
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      jsonPointers:
-        - /spec/replicas
+    spec:
+      # Spread pods across nodes
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: devops-app
 
-  # Health check override
-  revisionHistoryLimit: 5
+      # Security context for pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      # Graceful shutdown
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: devops-app
+          image: YOUR_ECR_URL/devops-app:IMAGE_TAG
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+
+          # Container security
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Liveness - app alive hai?
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness - traffic bhejo?
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Startup - slow start apps ke liye
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            failureThreshold: 30
+            periodSeconds: 10
+
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+
+          # Writable tmp directory only
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+            - name: logs-dir
+              mountPath: /app/logs
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+        - name: logs-dir
+          emptyDir: {}
+
+---
+# =============================================
+# Service
+# =============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-app-service
+  namespace: devops-app
+  labels:
+    app: devops-app
+  annotations:
+    prometheus.io/scrape: "true"
+spec:
+  selector:
+    app: devops-app
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: ClusterIP
+
+---
+# =============================================
+# HorizontalPodAutoscaler
+# =============================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: devops-app-hpa
+  namespace: devops-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: devops-app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# =============================================
+# PodDisruptionBudget
+# =============================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: devops-app-pdb
+  namespace: devops-app
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: devops-app
