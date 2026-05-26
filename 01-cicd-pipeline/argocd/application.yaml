@@ -1,12 +1,18 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
-metadata: 
+metadata:
   name: devops-app
   namespace: argocd
   labels:
     project: devops-pipeline
     environment: production
-spec: 
+    managed-by: argocd
+    team: devops
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: devops-alerts
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: devops-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: devops-alerts
+spec:
   project: default
 
   source:
@@ -20,14 +26,27 @@ spec:
 
   syncPolicy:
     automated:
-      prune: true        # Delete old resources automatically
-      selfHeal: true     # Auto fix if someone manually changes
+      prune: true          # Delete old resources automatically
+      selfHeal: true       # Auto fix manual changes
+      allowEmpty: false    # Never sync empty state (safety)
     syncOptions:
       - CreateNamespace=true
       - PrunePropagationPolicy=foreground
+      - ApplyOutOfSyncOnly=true     # Only sync changed resources
+      - ServerSideApply=true        # Better conflict handling
     retry:
       limit: 5
       backoff:
         duration: 5s
         factor: 2
         maxDuration: 3m
+
+  # Ignore differences in auto-scaled replicas
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+  # Health check override
+  revisionHistoryLimit: 5
