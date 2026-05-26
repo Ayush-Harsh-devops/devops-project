@@ -1,4 +1,4 @@
-name: CI/CD Pipeline — Security, Quality & Deploy
+name: CI/CD Pipeline — Security, Quality & Deploy 
 
 on:
   push:
