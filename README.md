@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 DevOps Real-Time Projects
+#  DevOps Real-Time Projects
 ### by Ayush Harsh
 
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-Jenkins%20%7C%20GitHub%20Actions-blue?style=for-the-badge&logo=jenkins)
