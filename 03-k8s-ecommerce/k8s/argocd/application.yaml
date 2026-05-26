@@ -3,21 +3,53 @@ kind: Application
 metadata:
   name: ecommerce-app
   namespace: argocd
+  labels:
+    project: ecommerce
+    environment: production
+    managed-by: argocd
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: devops-alerts
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: devops-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: devops-alerts
 spec:
   project: default
+
   source:
-    repoURL: https://github.com/Ayush-Harsh-devops/devops-project 
+    repoURL: https://github.com/Ayush-Harsh-devops/devops-project
     targetRevision: main
     path: 03-k8s-ecommerce/k8s/helm
     helm:
       valueFiles:
         - values.yaml
+      parameters:
+        - name: image.tag
+          value: latest
+
   destination:
     server: https://kubernetes.default.svc
     namespace: ecommerce
+
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
+      allowEmpty: false
     syncOptions:
       - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+  revisionHistoryLimit: 5
