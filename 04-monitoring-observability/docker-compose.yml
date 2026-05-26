@@ -1,89 +1,156 @@
+# ============================================
+# Monitoring Stack — Production Grade
+# Usage:
+#   mkdir -p secrets
+#   echo "DevOps@2024" > secrets/grafana_password.txt
+#   docker compose up -d
+#   docker compose ps
+#   docker compose logs -f prometheus
+# ============================================
+
 version: '3.8'
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &default-restart
+  restart: unless-stopped
 
 networks:
   monitoring:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
 
 volumes:
-  prometheus_data: {}
-  grafana_data: {}
-  loki_data: {}
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  loki_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+
+secrets:
+  grafana_password:
+    file: ./secrets/grafana_password.txt
 
 services:
 
+  # ── Prometheus ───────────────────────────────
   prometheus:
     image: prom/prometheus:v2.47.0
     container_name: prometheus
-    restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=15d'
+      - '--storage.tsdb.retention.size=10GB'
       - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--log.level=info'
     networks:
       - monitoring
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
+  # ── Alertmanager ─────────────────────────────
   alertmanager:
     image: prom/alertmanager:v0.26.0
     container_name: alertmanager
-    restart: unless-stopped
     ports:
       - "9093:9093"
     volumes:
-      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--cluster.advertise-address=0.0.0.0:9093'
+      - '--log.level=info'
     networks:
       - monitoring
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
+  # ── Grafana ──────────────────────────────────
   grafana:
     image: grafana/grafana:10.1.0
     container_name: grafana
-    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=DevOps@2024
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_password
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_SERVER_DOMAIN=localhost
+      - GF_ALERTING_ENABLED=true
+      - GF_UNIFIED_ALERTING_ENABLED=true
+    secrets:
+      - grafana_password
     volumes:
       - grafana_data:/var/lib/grafana
     networks:
       - monitoring
+    logging: *default-logging
+    <<: *default-restart
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
+  # ── Node Exporter ────────────────────────────
   node-exporter:
     image: prom/node-exporter:v1.6.1
     container_name: node-exporter
-    restart: unless-stopped
     ports:
       - "9100:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
       - monitoring
+    logging: *default-logging
+    <<: *default-restart
 
-  loki:
-    image: grafana/loki:2.9.0
-    container_name: loki
-    restart: unless-stopped
-    ports:
-      - "3100:3100"
-    volumes:
-      - loki_data:/loki
-    networks:
-      - monitoring
-
+  # ── cAdvisor ─────────────────────────────────
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.0
     container_name: cadvisor
-    restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
@@ -91,5 +158,31 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
     networks:
       - monitoring
+    logging: *default-logging
+    <<: *default-restart
+
+  # ── Loki ─────────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    command:
+      - '-config.file=/etc/loki/local-config.yaml'
+    networks:
+      - monitoring
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
