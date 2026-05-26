@@ -272,5 +272,5 @@ docker push YOUR_ECR_URL/mlops-app:latest
 ---
 
 <div align="center">
-<i>Built with ❤️ — Production-grade DevOps Portfolio</i>
+<i>Ayush Harsh</i>
 </div>
