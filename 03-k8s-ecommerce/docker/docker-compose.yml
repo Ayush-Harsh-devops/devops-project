@@ -1,82 +1,206 @@
+# ============================================
+# Docker Compose — E-commerce Local Dev
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f backend
+#   docker compose down -v
+# ============================================
+
 version: '3.8'
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &default-restart
+  restart: unless-stopped
+
 services:
+
+  # ── Frontend ────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - NODE_ENV=production
+    image: ecommerce-frontend:local
+    container_name: ecommerce-frontend
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - ecommerce-network
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
+  # ── Backend ─────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        - NODE_ENV=production
+    image: ecommerce-backend:local
+    container_name: ecommerce-backend
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
+      - PORT=3000
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=ecommercedb
+      - DB_USER=ecomuser
+      - DB_PASSWORD_FILE=/run/secrets/db_password
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    secrets:
+      - db_password
     depends_on:
-      postgres: 
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     networks:
       - ecommerce-network
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
+  # ── PostgreSQL ──────────────────────────────
   postgres:
     image: postgres:15-alpine
+    container_name: ecommerce-postgres
     environment:
       POSTGRES_DB: ecommercedb
       POSTGRES_USER: ecomuser
-      POSTGRES_PASSWORD: localpassword
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ecommerce-network
+    logging: *default-logging
+    <<: *default-restart
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ecomuser"]
+      test: ["CMD-SHELL", "pg_isready -U ecomuser -d ecommercedb"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - ecommerce-network
+      start_period: 10s
 
+  # ── Redis ────────────────────────────────────
   redis:
     image: redis:7-alpine
+    container_name: ecommerce-redis
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --loglevel notice
+    volumes:
+      - redis-data:/data
+    networks:
+      - ecommerce-network
+    logging: *default-logging
+    <<: *default-restart
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - ecommerce-network
 
+  # ── Prometheus ───────────────────────────────
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.48.0
+    container_name: ecommerce-prometheus
     ports:
       - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
     networks:
       - ecommerce-network
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
+  # ── Grafana ──────────────────────────────────
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.2.0
+    container_name: ecommerce-grafana
     ports:
       - "3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_DOMAIN=localhost
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    secrets:
+      - grafana_password
+    volumes:
+      - grafana-data:/var/lib/grafana
     networks:
       - ecommerce-network
+    logging: *default-logging
+    <<: *default-restart
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-networks: 
+# ── Secrets ────────────────────────────────────
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt
+
+# ── Networks ───────────────────────────────────
+networks:
   ecommerce-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
+# ── Volumes ────────────────────────────────────
 volumes:
   postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
