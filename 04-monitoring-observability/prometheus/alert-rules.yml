@@ -1,5 +1,12 @@
-groups: 
+# ============================================
+# Prometheus Alert Rules — Production Grade
+# ============================================
+
+groups:
+
+  # ── Node Alerts ──────────────────────────────
   - name: node-alerts
+    interval: 30s
     rules:
 
       - alert: HighCPUUsage
@@ -7,59 +14,121 @@ groups:
         for: 5m
         labels:
           severity: warning
+          team: devops
         annotations:
-          summary: "High CPU usage on {{ $labels.instance }}"
-          description: "CPU usage is above 80%. Current: {{ $value }}%"
+          summary: "High CPU on {{ $labels.instance }}"
+          description: "CPU above 80%. Current: {{ $value | printf \"%.1f\" }}%"
+          runbook: "https://runbooks.ayushharsh.dev/cpu-high"
 
       - alert: CriticalCPUUsage
         expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
         for: 2m
         labels:
           severity: critical
+          team: devops
         annotations:
           summary: "CRITICAL CPU on {{ $labels.instance }}"
-          description: "CPU above 95%! Current: {{ $value }}%"
+          description: "CPU above 95%! Current: {{ $value | printf \"%.1f\" }}%"
+          runbook: "https://runbooks.ayushharsh.dev/cpu-critical"
 
       - alert: HighMemoryUsage
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
         for: 5m
         labels:
           severity: warning
+          team: devops
         annotations:
           summary: "High memory on {{ $labels.instance }}"
-          description: "Memory above 85%. Current: {{ $value }}%"
+          description: "Memory above 85%. Current: {{ $value | printf \"%.1f\" }}%"
+
+      - alert: CriticalMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "CRITICAL memory on {{ $labels.instance }}"
+          description: "Memory above 95%! Current: {{ $value | printf \"%.1f\" }}%"
 
       - alert: DiskSpaceLow
         expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})) * 100 > 85
         for: 10m
         labels:
           severity: warning
+          team: devops
         annotations:
           summary: "Low disk on {{ $labels.instance }}"
-          description: "Disk above 85% on {{ $labels.mountpoint }}"
+          description: "Disk above 85% on {{ $labels.mountpoint }}. Current: {{ $value | printf \"%.1f\" }}%"
 
-  - name: kubernetes-alerts
-    rules:
-
-      - alert: PodCrashLooping
-        expr: rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 0
+      - alert: DiskSpaceCritical
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})) * 100 > 95
         for: 5m
         labels:
           severity: critical
+          team: devops
         annotations:
-          summary: "Pod {{ $labels.pod }} is crash looping"
-          description: "Pod restarted multiple times in last 15 minutes"
+          summary: "CRITICAL disk on {{ $labels.instance }}"
+          description: "Disk above 95% on {{ $labels.mountpoint }}!"
+
+      - alert: NodeDown
+        expr: up{job="node-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "Node {{ $labels.instance }} is DOWN"
+          description: "Node exporter unreachable for more than 1 minute"
+
+  # ── Kubernetes Alerts ────────────────────────
+  - name: kubernetes-alerts
+    interval: 30s
+    rules:
+
+      - alert: PodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 3
+        for: 5m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} crash looping"
+          description: "Pod restarted {{ $value | printf \"%.0f\" }} times in last 15 minutes"
 
       - alert: PodNotRunning
-        expr: kube_pod_status_phase{phase!="Running", phase!="Succeeded"} == 1
+        expr: kube_pod_status_phase{phase!~"Running|Succeeded"} == 1
         for: 5m
         labels:
           severity: warning
+          team: devops
         annotations:
-          summary: "Pod {{ $labels.pod }} is not running"
-          description: "Pod is in {{ $labels.phase }} state"
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not running"
+          description: "Pod is in {{ $labels.phase }} state for 5 minutes"
 
+      - alert: DeploymentReplicasMismatch
+        expr: kube_deployment_spec_replicas != kube_deployment_status_available_replicas
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} replicas mismatch"
+          description: "Desired {{ $value }} replicas not available"
+
+      - alert: HPAMaxedOut
+        expr: kube_horizontalpodautoscaler_status_current_replicas >= kube_horizontalpodautoscaler_spec_max_replicas
+        for: 10m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} maxed out"
+          description: "HPA running at maximum replicas for 10 minutes — may need scaling"
+
+  # ── Application Alerts ───────────────────────
   - name: application-alerts
+    interval: 15s
     rules:
 
       - alert: HighErrorRate
@@ -67,15 +136,37 @@ groups:
         for: 5m
         labels:
           severity: critical
+          team: devops
         annotations:
           summary: "High error rate on {{ $labels.job }}"
-          description: "Error rate above 5%. Current: {{ $value }}%"
+          description: "Error rate above 5%. Current: {{ $value | printf \"%.2f\" }}%"
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "High latency on {{ $labels.job }}"
+          description: "P95 latency above 2s. Current: {{ $value | printf \"%.2f\" }}s"
 
       - alert: ServiceDown
         expr: up == 0
         for: 1m
         labels:
           severity: critical
+          team: devops
         annotations:
           summary: "Service {{ $labels.job }} is DOWN"
-          description: "{{ $labels.instance }} down for more than 1 minute"
+          description: "{{ $labels.instance }} unreachable for more than 1 minute"
+
+      - alert: LowRequestRate
+        expr: rate(http_requests_total[5m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "Very low traffic on {{ $labels.job }}"
+          description: "Request rate below 0.1 req/s — possible outage or traffic drop"
