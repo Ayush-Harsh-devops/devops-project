@@ -1,13 +1,19 @@
----
+# ============================================
+# Kubernetes Monitoring Stack — Production
+# ============================================
+
+# ── Namespace ────────────────────────────────
 apiVersion: v1
 kind: Namespace
 metadata:
   name: monitoring
   labels:
     app: monitoring-stack
+    managed-by: kubectl
 
 ---
-apiVersion: v1 
+# ── Prometheus ConfigMap ──────────────────────
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
@@ -16,21 +22,83 @@ data:
   prometheus.yml: |
     global:
       scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: devops-k8s
+        environment: production
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
+    rule_files:
+      - /etc/prometheus/rules/*.yml
     scrape_configs:
-      - job_name: 'kubernetes-pods'
+      - job_name: kubernetes-pods
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
             action: keep
-            regex: true
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
 
 ---
+# ── Prometheus ServiceAccount ─────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/metrics]
+    verbs: [get]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+
+---
+# ── Prometheus Deployment ─────────────────────
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus
   namespace: monitoring
+  labels:
+    app: prometheus
 spec:
   replicas: 1
   selector:
@@ -40,15 +108,31 @@ spec:
     metadata:
       labels:
         app: prometheus
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
     spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
       containers:
         - name: prometheus
           image: prom/prometheus:v2.47.0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+            - '--web.enable-lifecycle'
           ports:
-            - containerPort: 9090
+            - name: http
+              containerPort: 9090
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
           resources:
             requests:
               memory: "512Mi"
@@ -56,61 +140,44 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: data
+          emptyDir: {}
 
---- 
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: prometheus
   namespace: monitoring
+  labels:
+    app: prometheus
 spec:
   selector:
     app: prometheus
   ports:
-    - port: 9090
+    - name: http
+      port: 9090
       targetPort: 9090
   type: ClusterIP
 
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: grafana
-  namespace: monitoring
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: grafana
-  template:
-    metadata:
-      labels:
-        app: grafana
-    spec:
-      containers:
-        - name: grafana
-          image: grafana/grafana:10.1.0
-          ports:
-            - containerPort: 3000
-          env:
-            - name: GF_SECURITY_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: grafana-secret
-                  key: admin-password
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "250m"
-
----
+# ── Grafana Secret ────────────────────────────
 apiVersion: v1
 kind: Secret
 metadata:
@@ -121,25 +188,98 @@ stringData:
   admin-password: "DevOps@2024"
 
 ---
+# ── Grafana Deployment ────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.1.0
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-secret
+                  key: admin-password
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: grafana
   namespace: monitoring
+  labels:
+    app: grafana
 spec:
   selector:
     app: grafana
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 3000
   type: LoadBalancer
 
 ---
+# ── Node Exporter DaemonSet ───────────────────
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: node-exporter
   namespace: monitoring
+  labels:
+    app: node-exporter
 spec:
   selector:
     matchLabels:
@@ -153,11 +293,22 @@ spec:
         prometheus.io/port: "9100"
     spec:
       hostNetwork: true
+      hostPID: true
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
       containers:
         - name: node-exporter
           image: prom/node-exporter:v1.6.1
+          args:
+            - '--path.procfs=/host/proc'
+            - '--path.sysfs=/host/sys'
+            - '--path.rootfs=/rootfs'
+            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
           ports:
-            - containerPort: 9100
+            - name: metrics
+              containerPort: 9100
+              hostPort: 9100
           volumeMounts:
             - name: proc
               mountPath: /host/proc
@@ -165,6 +316,16 @@ spec:
             - name: sys
               mountPath: /host/sys
               readOnly: true
+            - name: rootfs
+              mountPath: /rootfs
+              readOnly: true
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
       volumes:
         - name: proc
           hostPath:
@@ -172,3 +333,19 @@ spec:
         - name: sys
           hostPath:
             path: /sys
+        - name: rootfs
+          hostPath:
+            path: /
+
+---
+# ── PodDisruptionBudget ───────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prometheus-pdb
+  namespace: monitoring
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: prometheus
