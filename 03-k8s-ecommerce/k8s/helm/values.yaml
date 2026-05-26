@@ -1,20 +1,57 @@
 # ============================================
-# HELM VALUES — E-commerce App 
-# Author: Ayush Harsh
+# HELM VALUES — E-commerce Production
+# Usage:
+#   helm lint .
+#   helm template ecommerce . -f values.yaml
+#   helm upgrade --install ecommerce . \
+#     -f values.yaml \
+#     -n ecommerce \
+#     --create-namespace \
+#     --atomic \
+#     --timeout 5m
 # ============================================
 
 replicaCount: 3
 
 image:
   repository: your-ecr-url/ecommerce-app
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   tag: "latest"
 
+nameOverride: ""
+fullnameOverride: "ecommerce-app"
+
+# ── Service Account ─────────────────────────
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "ecommerce-sa"
+
+# ── Pod Security ─────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ── Service ──────────────────────────────────
 service:
   type: ClusterIP
   port: 80
   targetPort: 3000
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+    prometheus.io/path: "/metrics"
 
+# ── Ingress ──────────────────────────────────
 ingress:
   enabled: true
   className: alb
@@ -22,12 +59,20 @@ ingress:
     kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
   hosts:
     - host: ecommerce.ayushharsh.dev
       paths:
         - path: /
           pathType: Prefix
+  tls:
+    - secretName: ecommerce-tls
+      hosts:
+        - ecommerce.ayushharsh.dev
 
+# ── Resources ────────────────────────────────
 resources:
   requests:
     memory: "128Mi"
@@ -36,19 +81,23 @@ resources:
     memory: "512Mi"
     cpu: "500m"
 
+# ── Autoscaling ──────────────────────────────
 autoscaling:
   enabled: true
-  minReplicas: 2
+  minReplicas: 3
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
+# ── Probes ───────────────────────────────────
 livenessProbe:
   httpGet:
     path: /health
     port: 3000
   initialDelaySeconds: 30
   periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
 
 readinessProbe:
   httpGet:
@@ -56,18 +105,82 @@ readinessProbe:
     port: 3000
   initialDelaySeconds: 5
   periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
 
+startupProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  failureThreshold: 30
+  periodSeconds: 10
+
+# ── Environment ──────────────────────────────
 env:
   NODE_ENV: production
   PORT: "3000"
+  TZ: "Asia/Kolkata"
 
+# ── Volumes (writable tmp) ───────────────────
+volumes:
+  - name: tmp-dir
+    emptyDir: {}
+  - name: logs-dir
+    emptyDir: {}
+
+volumeMounts:
+  - name: tmp-dir
+    mountPath: /tmp
+  - name: logs-dir
+    mountPath: /app/logs
+
+# ── Topology Spread ──────────────────────────
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: ecommerce-app
+
+# ── PodDisruptionBudget ──────────────────────
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# ── PostgreSQL (Bitnami) ─────────────────────
 postgresql:
   enabled: true
   auth:
     database: ecommercedb
     username: ecomuser
+    existingSecret: ecommerce-db-secret
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
 
+# ── Redis (Bitnami) ──────────────────────────
 redis:
   enabled: true
   auth:
     enabled: true
+    existingSecret: ecommerce-redis-secret
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
