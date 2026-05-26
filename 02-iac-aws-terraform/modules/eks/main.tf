@@ -1,7 +1,8 @@
 # ============================================
-# EKS MODULE
+# EKS MODULE — Production Grade
 # ============================================
 
+# ── EKS Cluster ──────────────────────────────
 resource "aws_eks_cluster" "main" {
   name     = "${var.project_name}-${var.environment}-eks"
   role_arn = aws_iam_role.eks_cluster.arn
@@ -11,33 +12,82 @@ resource "aws_eks_cluster" "main" {
     subnet_ids              = var.subnet_ids
     endpoint_private_access = true
     endpoint_public_access  = true
+    public_access_cidrs     = ["0.0.0.0/0"]
   }
 
-  enabled_cluster_log_types = ["api", "audit", "authenticator"]
+  # Enable all control plane logs
+  enabled_cluster_log_types = [
+    "api", "audit", "authenticator",
+    "controllerManager", "scheduler"
+  ]
 
-  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+  # Encrypt secrets at rest
+  encryption_config {
+    resources = ["secrets"]
+    provider {
+      key_arn = aws_kms_key.eks.arn
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-eks"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy,
+    aws_cloudwatch_log_group.eks
+  ]
 }
 
+# ── KMS Key for EKS Secrets ──────────────────
+resource "aws_kms_key" "eks" {
+  description             = "EKS secrets encryption — ${var.project_name}-${var.environment}"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  tags = {
+    Name = "${var.project_name}-${var.environment}-eks-kms"
+  }
+}
+
+# ── CloudWatch Log Group ─────────────────────
+resource "aws_cloudwatch_log_group" "eks" {
+  name              = "/aws/eks/${var.project_name}-${var.environment}/cluster"
+  retention_in_days = 30
+}
+
+# ── EKS Node Group ───────────────────────────
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${var.project_name}-${var.environment}-nodes"
   node_role_arn   = aws_iam_role.eks_nodes.arn
   subnet_ids      = var.subnet_ids
-  instance_types  = ["t3.medium"]
+  instance_types  = [var.node_instance_type]
+  capacity_type   = var.environment == "prod" ? "ON_DEMAND" : "SPOT"
 
   scaling_config {
-    desired_size = 2
-    min_size     = 1
-    max_size     = 5
+    desired_size = var.node_desired
+    min_size     = var.node_min
+    max_size     = var.node_max
   }
 
   update_config {
     max_unavailable = 1
   }
 
+  # Auto-update node AMI
+  release_version = null
+
   labels = {
     Environment = var.environment
     Project     = var.project_name
+    NodeGroup   = "main"
+  }
+
+  tags = {
+    Name                                                          = "${var.project_name}-${var.environment}-nodes"
+    "k8s.io/cluster-autoscaler/enabled"                          = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-${var.environment}-eks" = "owned"
   }
 
   depends_on = [
@@ -47,9 +97,10 @@ resource "aws_eks_node_group" "main" {
   ]
 }
 
-# IAM Role for EKS Cluster
+# ── IAM: EKS Cluster Role ────────────────────
 resource "aws_iam_role" "eks_cluster" {
   name = "${var.project_name}-${var.environment}-eks-cluster-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -65,9 +116,10 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   role       = aws_iam_role.eks_cluster.name
 }
 
-# IAM Role for EKS Nodes
+# ── IAM: EKS Nodes Role ──────────────────────
 resource "aws_iam_role" "eks_nodes" {
   name = "${var.project_name}-${var.environment}-eks-nodes-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -93,5 +145,8 @@ resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
   role       = aws_iam_role.eks_nodes.name
 }
 
+# ── Outputs ───────────────────────────────────
 output "cluster_name"     { value = aws_eks_cluster.main.name }
 output "cluster_endpoint" { value = aws_eks_cluster.main.endpoint }
+output "cluster_ca"       { value = aws_eks_cluster.main.certificate_authority[0].data }
+output "kms_key_arn"      { value = aws_kms_key.eks.arn }
