@@ -1,30 +1,49 @@
 pipeline {
     agent any
-    
+
     environment {
-        AWS_REGION = 'us-east-1'
-        ECR_REGISTRY = 'your-aws-account-id.dkr.ecr.us-east-1.amazonaws.com'
-        IMAGE_NAME = 'devops-app'
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        SONAR_PROJECT = 'devops-app'
+        AWS_REGION     = 'us-east-1'
+        ECR_REGISTRY   = 'your-aws-account-id.dkr.ecr.us-east-1.amazonaws.com'
+        IMAGE_NAME     = 'devops-app'
+        IMAGE_TAG      = "${BUILD_NUMBER}"
+        SONAR_PROJECT  = 'devops-app'
+        SLACK_CHANNEL  = '#devops-alerts'
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
     }
 
     stages {
-        stage(' Checkout') {
+
+        stage('Checkout') {
             steps {
                 checkout scm
-                echo " Code checkout complete"
+                sh '''
+                    echo "===== BUILD INFO ====="
+                    echo "Branch   : $(git rev-parse --abbrev-ref HEAD)"
+                    echo "Commit   : $(git rev-parse --short HEAD)"
+                    echo "Builder  : $(whoami)@$(hostname)"
+                    echo "Date     : $(date '+%Y-%m-%d %H:%M:%S')"
+                    echo "======================"
+                '''
             }
         }
 
-        stage(' SonarQube Analysis') {
+        stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
+                        set -e
+                        echo "[INFO] Running SonarQube scan..."
                         sonar-scanner \
                           -Dsonar.projectKey=${SONAR_PROJECT} \
                           -Dsonar.sources=. \
-                          -Dsonar.host.url=${SONAR_HOST_URL}
+                          -Dsonar.host.url=${SONAR_HOST_URL} \
+                          -Dsonar.exclusions="**/node_modules/**,**/vendor/**"
+                        echo "[INFO] SonarQube scan complete"
                     '''
                 }
             }
@@ -41,36 +60,103 @@ pipeline {
         stage('Docker Build') {
             steps {
                 sh '''
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    set -e
+                    echo "[INFO] Building Docker image..."
+                    docker build \
+                      --no-cache \
+                      --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+                      --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+                      -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
                     docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
                       ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
+                      ${ECR_REGISTRY}/${IMAGE_NAME}:latest
+
+                    echo "[INFO] Image size: $(docker image inspect ${IMAGE_NAME}:${IMAGE_TAG} \
+                      --format='{{.Size}}' | awk '{printf "%.2f MB", $1/1024/1024}')"
                 '''
             }
         }
 
-        stage('Docker Push to ECR') {
+        stage('Trivy Security Scan') {
+            steps {
+                sh '''
+                    set -e
+                    echo "[INFO] Running Trivy vulnerability scan..."
+                    trivy image \
+                      --exit-code 1 \
+                      --severity HIGH,CRITICAL \
+                      --no-progress \
+                      --format table \
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                    echo "[INFO] Trivy scan passed — no critical vulnerabilities"
+                '''
+            }
+        }
+
+        stage('Push to ECR') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-creds') {
                     sh '''
+                        set -e
+                        echo "[INFO] Logging into AWS ECR..."
                         aws ecr get-login-password --region ${AWS_REGION} | \
                           docker login --username AWS \
                           --password-stdin ${ECR_REGISTRY}
+
+                        echo "[INFO] Pushing image to ECR..."
                         docker push ${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                        docker push ${ECR_REGISTRY}/${IMAGE_NAME}:latest
+
+                        echo "[INFO] Cleaning up local images..."
+                        docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true
+                        docker system prune -f --filter "until=24h"
+                        echo "[INFO] Push complete"
                     '''
                 }
             }
         }
 
-        stage('ArgoCD Deploy') {
+        stage('Deploy to Staging') {
             steps {
                 sh '''
+                    set -e
+                    echo "[INFO] Updating deployment manifest for staging..."
                     cd argocd
                     sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" deployment.yaml
+
                     git config user.email "ci@devops.com"
                     git config user.name "Jenkins CI"
-                    git add .
-                    git commit -m "ci: update image tag to ${IMAGE_TAG}"
+                    git add deployment.yaml
+                    git commit -m "ci(staging): deploy image tag ${IMAGE_TAG} [skip ci]"
                     git push origin main
+                    echo "[INFO] ArgoCD will sync staging automatically"
+                '''
+            }
+        }
+
+        stage('Approval: Deploy to Production') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: "Deploy ${IMAGE_TAG} to PRODUCTION?",
+                          ok: 'Approve & Deploy'
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            steps {
+                sh '''
+                    set -e
+                    echo "[INFO] Deploying to production..."
+                    cd argocd
+                    sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" deployment-prod.yaml
+                    git add deployment-prod.yaml
+                    git commit -m "ci(prod): deploy image tag ${IMAGE_TAG} [skip ci]"
+                    git push origin main
+                    echo "[INFO] Production deploy triggered via ArgoCD"
                 '''
             }
         }
@@ -78,10 +164,36 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline SUCCESS — App Deployed!'
+            echo "[SUCCESS] Pipeline completed for build #${BUILD_NUMBER}"
+            slackSend(
+                channel: "${SLACK_CHANNEL}",
+                color: 'good',
+                message: """
+                     *BUILD SUCCESS* — `${IMAGE_NAME}:${IMAGE_TAG}`
+                    Branch : `${GIT_BRANCH}`
+                    Commit : `${GIT_COMMIT[0..6]}`
+                    Job    : ${BUILD_URL}
+                """.stripIndent()
+            )
         }
         failure {
-            echo 'Pipeline FAILED — Check logs!'
+            echo "[FAILED] Pipeline failed at build #${BUILD_NUMBER}"
+            slackSend(
+                channel: "${SLACK_CHANNEL}",
+                color: 'danger',
+                message: """
+                     *BUILD FAILED* — `${IMAGE_NAME}:${IMAGE_TAG}`
+                    Branch : `${GIT_BRANCH}`
+                    Job    : ${BUILD_URL}
+                """.stripIndent()
+            )
+        }
+        always {
+            sh '''
+                echo "[INFO] Workspace cleanup..."
+                docker logout || true
+                echo "[INFO] Done."
+            '''
         }
     }
 }
