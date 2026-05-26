@@ -1,3 +1,7 @@
+# ============================================
+# Alertmanager Config — Production Grade
+# ============================================
+
 global:
   resolve_timeout: 5m
   slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
@@ -5,58 +9,93 @@ global:
   smtp_from: 'alerts@yourdomain.com'
   smtp_auth_username: 'YOUR_EMAIL'
   smtp_auth_password: 'YOUR_APP_PASSWORD'
+  smtp_require_tls: true
 
+# ── Templates ────────────────────────────────
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# ── Routing ──────────────────────────────────
 route:
-  group_by: ['alertname', 'severity']
+  group_by: ['alertname', 'severity', 'namespace']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 12h
-  receiver: 'slack-notifications'
+  receiver: slack-notifications
 
   routes:
     - match:
         severity: critical
-      receiver: 'critical-alerts'
+      receiver: critical-alerts
       repeat_interval: 1h
+      continue: false
 
     - match:
         severity: warning
-      receiver: 'slack-notifications'
+      receiver: slack-notifications
       repeat_interval: 6h
 
+    - match:
+        alertname: Watchdog
+      receiver: null-receiver
+
+# ── Receivers ────────────────────────────────
 receivers:
 
-  - name: 'slack-notifications'
+  - name: null-receiver
+
+  - name: slack-notifications
     slack_configs:
       - channel: '#devops-alerts'
         send_resolved: true
-        title: 'Alert: {{ .GroupLabels.alertname }}'
+        icon_emoji: ':bell:'
+        username: 'Alertmanager'
+        title: |-
+          [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
         text: >-
           {{ range .Alerts }}
-          *Alert:* {{ .Annotations.summary }}
+          *Alert:*      {{ .Annotations.summary }}
           *Description:* {{ .Annotations.description }}
-          *Severity:* {{ .Labels.severity }}
+          *Severity:*   {{ .Labels.severity }}
+          *Instance:*   {{ .Labels.instance }}
+          *Started:*    {{ .StartsAt | since }}
           {{ end }}
         color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+        http_config:
+          follow_redirects: true
 
-  - name: 'critical-alerts'
+  - name: critical-alerts
     slack_configs:
       - channel: '#devops-critical'
         send_resolved: true
-        title: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        icon_emoji: ':fire:'
+        username: 'CRITICAL-Alert'
+        title: ' CRITICAL: {{ .CommonLabels.alertname }}'
         text: >-
           {{ range .Alerts }}
-          *Alert:* {{ .Annotations.summary }}
+          *Alert:*      {{ .Annotations.summary }}
           *Description:* {{ .Annotations.description }}
+          *Instance:*   {{ .Labels.instance }}
+          *Namespace:*  {{ .Labels.namespace }}
+          *Started:*    {{ .StartsAt | since }}
           {{ end }}
+        color: danger
     email_configs:
       - to: 'harsh4ayush85@gmail.com'
         send_resolved: true
-        subject: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        subject: ' CRITICAL: {{ .CommonLabels.alertname }} — {{ .CommonLabels.instance }}'
+        html: |
+          <h2>Critical Alert Fired</h2>
+          {{ range .Alerts }}
+          <p><b>Alert:</b> {{ .Annotations.summary }}</p>
+          <p><b>Description:</b> {{ .Annotations.description }}</p>
+          <p><b>Instance:</b> {{ .Labels.instance }}</p>
+          {{ end }}
 
+# ── Inhibit Rules ─────────────────────────────
 inhibit_rules:
   - source_match:
-      severity: 'critical'
+      severity: critical
     target_match:
-      severity: 'warning'
-    equal: ['alertname', 'instance']
+      severity: warning
+    equal: ['alertname', 'instance', 'namespace']
