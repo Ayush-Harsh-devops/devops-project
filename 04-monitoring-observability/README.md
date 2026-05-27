@@ -2,6 +2,14 @@
 
 Production-grade monitoring stack with Prometheus, Grafana, Alertmanager, and Loki — deployed on Kubernetes (AWS EKS) .
 
+## 📸 Screenshots
+
+### Grafana Monitoring Dashboard
+![Grafana Dashboard](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/04-monitoring-observability/grafana-dashboard.png)
+
+### Alertmanager Alerts
+![Alertmanager](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/04-monitoring-observability/alertmanager-dashboard.png)
+
 ## 🛠️ Tech Stack
 
 | Tool | Purpose |
