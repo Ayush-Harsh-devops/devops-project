@@ -33,13 +33,22 @@ rds/   → PostgreSQL, Security Groups, Secrets Manager
 - ✅ Least privilege IAM roles
 - ✅ All resources tagged automatically .
 
-## 🚀 How to Deploy
+## How to Deploy
 ```bash
 cd environments/dev
 terraform init
 terraform plan -var-file="terraform.tfvars"
 terraform apply -var-file="terraform.tfvars"
 ```
+## 📸 Screenshots
+
+### Terraform Plan Output
+![Terraform Plan](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/02-iac-aws-terraform/terraform-plan.png)
+
+### AWS Infrastructure Architecture
+![AWS Infrastructure](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/02-iac-aws-terraform/terraform-aws-infra.png)
+
+
 
 ## 👨‍💻 Author
 **Ayush Harsh** | DevOps Engineer
