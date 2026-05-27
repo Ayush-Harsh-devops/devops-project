@@ -48,6 +48,14 @@ GitOps:     GitHub Push → ArgoCD → EKS Deploy
 │       └── prometheus.yml
 └── README.md
 
+## 📸 Screenshots
+
+### Kubernetes Helm Deployment
+![K8s Deployment](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/03-k8s-ecommerce/k8s-helm-deployment.png)
+
+### Ecommerce Architecture
+![Architecture](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/03-k8s-ecommerce/k8s-ecommerce-architecture.png)
+
 ## ⚡ Key Features
 - ✅ Multi-stage Docker builds (60% smaller images)
 - ✅ Docker Compose for local development
