@@ -37,6 +37,14 @@ ArgoCD (GitOps) → Deploy to AWS EKS
 │   └── deployment.yaml      # K8s Deployment + Service
 └── README.md
 
+## 📸 Screenshots
+
+### Jenkins CI/CD Pipeline
+![Jenkins Pipeline](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/01-cicd-pipeline/jenkins_pipeline_dashboard.svg)
+
+### ArgoCD GitOps Sync
+![ArgoCD Sync](https://raw.githubusercontent.com/Ayush-Harsh-devops/devops-project/main/01-cicd-pipeline/argocd_gitops_sync.svg)
+
 ## ⚡ Key Features
 - ✅ Multi-stage Docker build (smaller image size)
 - ✅ Trivy security scanning (blocks Critical/High CVEs)
