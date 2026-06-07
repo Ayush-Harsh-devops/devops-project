@@ -1,5 +1,4 @@
 # ============================================
-# HELM VALUES — E-commerce Production
 # Usage:
 #   helm lint .
 #   helm template ecommerce . -f values.yaml
