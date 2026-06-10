@@ -7,7 +7,7 @@ pipeline {
         IMAGE_NAME     = 'devops-app'
         IMAGE_TAG      = "${BUILD_NUMBER}"
         SONAR_PROJECT  = 'devops-app'
-        SLACK_CHANNEL  = '#devops-alerts'
+        SLACK_CHANNEL  = '#devops-alerts' 
     }
 
     options {
