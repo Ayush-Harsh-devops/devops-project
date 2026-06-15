@@ -199,7 +199,7 @@ jobs:
           echo "image-uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "[SUCCESS] Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-# =============================================================
+# ======================================
 # JOB 4: Notify
 # =============================================================
   notify:
