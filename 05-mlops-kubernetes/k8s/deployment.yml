@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: house-price-api
-  namespace: mlops
+  namespace: mlops 
   labels:
     app: house-price-api
 spec:
