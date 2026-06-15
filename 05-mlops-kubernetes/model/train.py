@@ -81,7 +81,7 @@ def train():
         # Save model + scaler
         os.makedirs("model/artifacts", exist_ok=True)
         joblib.dump(model,  "model/artifacts/model.pkl")
-        joblib.dump(scaler, "model/artifacts/scaler.pkl")
+        joblib.dump(scaler, "model/artifacts/scaler.pkl") 
 
         mlflow.sklearn.log_model(model, "house-price-model")
         print("Model saved successfully!")
