@@ -3,7 +3,7 @@ pipeline {
  
     environment {
         AWS_REGION     = 'us-east-1'
-        ECR_REGISTRY   = 'your-aws-account-id.dkr.ecr.us-east-1.amazonaws.com'
+        ECR_REGISTRY   = 'your-aws-account-id.dkr.ecr.us-east-1.amazonaws.com' 
         IMAGE_NAME     = 'devops-app'
         IMAGE_TAG      = "${BUILD_NUMBER}"
         SONAR_PROJECT  = 'devops-app'
