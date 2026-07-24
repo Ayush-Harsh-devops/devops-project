@@ -1,5 +1,5 @@
 #!/bin/bash
-# ============================================================
+# ======================================================
 # DevOps Monitoring Stack — Production Setup Script
 # Author: Ayush Harsh
 # Usage:
